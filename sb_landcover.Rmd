@@ -1,57 +1,55 @@
-# Overview
+---
+title: 'Santa Barbara Landcover Classification'
+author: "{Kristina Glass}"
+date: "2023-12-15"
+output:
+    html_document:
+      print_df: paged
+      toc: yes
+      toc_depth: 4
+      toc_float: yes
+---
 
-Monitoring the distribution and change in land cover types can help us understand the impacts of phenomena like climate change, natural disasters, deforestation, and urbanization. Determining land cover types over large areas is a major application of remote sensing because we are able to distinguish different materials based on their spectral reflectance.
+# Introduction
 
-Classifying remotely sensed imagery into landcover classes enables us to understand the distribution and change in landcover types over large areas. There are many approaches for performing landcover classification -- *supervised* approaches use training data labeled by the user, whereas *unsupervised* approaches use algorithms to create groups which are identified by the user afterward.\
+*\*Credit: This project is based on materials developed by Chris Kibler*.
 
-credit: this lab is based on a materials developed by Chris Kibler.
+Monitoring the distribution and change in land cover types can allow us to gain insights into the impacts of climate change, natural disasters, deforestation, urbanization, and over major phenomena. This is a major application of remote sensing due to the ability to distinguish different materials based on their spectral reflecance from this process, especially in large areas.
 
-# Task
+## Area of Interest
 
-In this lab, we are using a form of supervised classification, a *decision tree classifier*. [Decision trees](https://medium.com/@ml.at.berkeley/machine-learning-crash-course-part-5-decision-trees-and-ensemble-models-dcc5a36af8cd) classify pixels using a series of conditions based on values in spectral bands. These conditions (or decisions) are developed based on training data. In this lab we will create a land cover classification for southern Santa Barbara County based on multi-spectral imagery and data on the location of 4 land cover types:
+The area of interest for this study is Southern Santa Barbara County in California, which was first settled by the Chumash tribe around 13,000 years ago. Following the large-scale Spanish colonization of the area in the 1770s and subsequent statehood of California 100 years later, Santa Barbara County has grown into an industrialized region of the Southern California Coast, home to about 440,00 residents[1](<https://en.wikipedia.org/wiki/Santa_Barbara_County,_California>)
 
--   green vegetation\
--   dry grass or soil\
--   urban\
--   concrete\
--   water\
+# Purpose of Study
 
-## Summary
+The purpose of this study is to use a [decision tree classifier](([https://medium.com/\@ml.at.berkeley/machine-learning-crash-course-part-5-decision-trees-and-ensemble-models-dcc5a36af8cd](https://medium.com/@ml.at.berkeley/machine-learning-crash-course-part-5-decision-trees-and-ensemble-models-dcc5a36af8cd){.uri})), a form of supervised classification, to classify land cover in Santa Barbara County. This will examine 4 land cover types using multi-spectral imagery. The land cover types include:
 
--   load and process Landsat scene\
--   crop and mask Landsat data to study area\
--   extract spectral data at training sites\
--   train and apply decision tree classifier\
--   plot results
+-   green vegetation
+-   dry grass or soil
+-   urban
+-   concrete
+-   water
 
-## Data
+# Data
 
-**Landsat 5 Thematic Mapper**\
+**Landsat 5 Thematic Mapper**
 
 -   [Landsat 5](https://www.usgs.gov/landsat-missions/landsat-5)
--   1 scene from September 25, 2007\
+-   1 scene from September 25, 2007
 -   bands: 1, 2, 3, 4, 5, 7
--   Collection 2 surface reflectance product\
+-   Collection 2 surface reflectance product
 
 **Study area and training data**
 
 -   polygon representing southern Santa Barbara county
--   polygons representing training sites\
-    -   type: character string with land cover type\
+-   polygons representing training sites
+    -   type: character string with land cover type
 
 # Workflow
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
-## Process data
-
-#### Load packages and set working directory
-
-We'll be working with vector and raster data, so will need both `sf` and `terra`. To train our classification algorithm and plot the results, we'll use the `rpart` and `rpart.plot` packages. Set your working directory to the folder that holds the data for this lab.\
-
-**Note:** my filepaths may look different than yours!
 
 ```{r include=TRUE, message=FALSE, warning=FALSE}
 library(sf)
@@ -61,16 +59,17 @@ library(dplyr)
 library(rpart)
 library(rpart.plot)
 library(tmap)
+library(ggplot2)
 
 rm(list = ls())
 
-here::i_am("week9/week9-template.Rmd")
+here::i_am("assignments/santa_barbara_county_landcover_classification/sb_landcover.Rmd")
 setwd(here())
 ```
 
-#### Load Landsat data
+## Create a Raster Stack
 
-Let's create a raster stack based on the 6 bands we will be working with. Each file name ends with the band number (e.g. `B1.tif`). Notice that we are missing a file for band 6. Band 6 corresponds to thermal data, which we will not be working with for this lab. To create a raster stack, we will create a list of the files that we would like to work with and read them all in at once using the `rast` function. We'll then update the names of the layers to match the spectral bands and plot a true color image to see what we're working with.
+A list of all raster files are created to be put into the `rast` function to create the stack. The bands in the rasters are "blue", "green", "red", "NIR", "SWIR1", and "SWIR2".
 
 ```{r include=TRUE}
 # list files for each band, including the full file path
@@ -81,14 +80,13 @@ landsat <- rast(filelist)
 # update layer names to match band
 names(landsat) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
 
-landsat
 # plot true color image
 plotRGB(landsat, r = 3, g = 2, blue = 1, stretch = "lin")
 ```
 
-#### Load study area
+## Study Area
 
-We want to contstrain our analysis to the southern portion of the county where we have training data, so we'll read in a file that defines the area we would like to study.
+The area of study is the southern portion of Santa Barbara County, but the county shapefile contains the entire county. To isolate our area of interest, the shapefile needs to be cropped and masked to the raster area
 
 ```{r include=TRUE}
 
@@ -97,39 +95,32 @@ sb_county_south <- st_read("data/SB_county_south.shp")
 # project to match the Landsat data
 sb_county_south <- st_transform(sb_county_south, crs = st_crs(landsat))
 
-plot(sb_county_south)
-```
-
-#### Crop and mask Landsat data to study area
-
-Now, we can crop and mask the Landsat data to our study area. This reduces the amount of data we'll be working with and therefore saves computational time. We can also remove any objects we're no longer working with to save space.
-
-```{r include=TRUE}
-
 # crop Landsat scene to the extent of the SB county shapefile
 landsat_cropped <- crop(landsat, sb_county_south)
 # mask the raster to southern portion of SB county
 landsat_masked <- mask(landsat_cropped, sb_county_south)
 # remove unnecessary object from environment
 rm(landsat, landsat_cropped, sb_county_south)
-
+#plot new dataframe
 plotRGB(landsat_masked, r = 3, g = 2, blue = 1, stretch = "lin")
+
 ```
 
-#### Convert Landsat values to reflectance
+## Reflectance
 
-Now we need to convert the values in our raster stack to correspond to reflectance values. To do so, we need to remove erroneous values and apply any [scaling factors](https://www.usgs.gov/faqs/how-do-i-use-scale-factor-landsat-level-2-science-products#:~:text=Landsat%20Collection%202%20surface%20temperature,the%20scale%20factor%20is%20applied.) to convert to reflectance.\
+The values of the raster stack need to be converted to reflectance values by removing erroneous values and apply any [scaling factors](https://www.usgs.gov/faqs/how-do-i-use-scale-factor-landsat-level-2-science-products#:~:text=Landsat%20Collection%202%20surface%20temperature,the%20scale%20factor%20is%20applied.) to convert to reflectance.\
 
-In this case, we are working with [Landsat Collection 2](https://www.usgs.gov/landsat-missions/landsat-collection-2). The valid range of pixel values for this collection 7,273-43,636, with a multiplicative scale factor of 0.0000275 and an additive scale factor of -0.2. So we reclassify any erroneous values as `NA` and update the values for each pixel based on the scaling factors. Now the pixel values should range from 0-100%.
+This project uses the [Landsat Collection 2](https://www.usgs.gov/landsat-missions/landsat-collection-2). The valid range of pixel values for this collection 7,273-43,636, with a multiplicative scale factor of 0.0000275 and an additive scale factor of -0.2. So we reclassify any erroneous values as `NA` and update the values for each pixel based on the scaling factors. Now the pixel values should range from 0-100%.
+
+After reclassifying, the shapefile containing the different locations within the study area and the land cover types will be loaded in. From there, the spectral values at each site should be extracted to create a data frame that relates land cover types to their spectral reflectance.
 
 ```{r include=TRUE}
-
+# view initial summary of raster
 summary(landsat_masked)
 # reclassify erroneous values as NA
-
 rcl <- matrix(c(-Inf, 7273, NA,
          43636, Inf, NA),
-       ncol = 3, byrow = TRUE)
+       ncol = 3, byrow = TRUE) #create matrix to be used in reclassification
 
 landsat<- classify(landsat_masked, rcl = rcl)
 # adjust values based on scaling factor
@@ -141,13 +132,7 @@ summary(landsat)
 # check values are 0 - 100
 ```
 
-## Classify image
-
-#### Extract reflectance values for training data
-
-We will load the shapefile identifying different locations within our study area as containing one of our 4 land cover types. We can then extract the spectral values at each site to create a data frame that relates land cover types to their spectral reflectance.
-
-```{r include=TRUE}
+```{r}
 # read in and transform training data
 
 training_data <- st_read("data/trainingdata.shp") %>% 
@@ -157,18 +142,18 @@ training_data_values<- extract(landsat, training_data, df = TRUE)
 # convert training data to data frame
 
 training_data_attributes <- training_data %>% 
-  st_drop_geometry()
+  st_drop_geometry() #drop unessecary geometry
 # join training data attributes and extracted reflectance values
 sb_training_data <- left_join(training_data_values, training_data_attributes,
-          by = c("ID" = "id")) %>% 
-  mutate(type = as.factor(type))
+          by = c("ID" = "id")) %>% #join by matching column "ID"
+  mutate(type = as.factor(type)) #turn "type" column containing vegetation types into factor
 ```
 
-#### Train decision tree classifier
+## Train Decision Tree Classifier
 
-To train our decision tree, we first need to establish our model formula (i.e. what our response and predictor variables are). The `rpart` function implements the [CART algorithm](https://medium.com/geekculture/decision-trees-with-cart-algorithm-7e179acee8ff). The `rpart` function needs to know the model formula and training data you would like to use. Because we are performing a classification, we set `method = "class"`. We also set `na.action = na.omit` to remove any pixels with `NA`s from the analysis.\
+To train the decision tree, we first need to establish our model formula (i.e. what our response and predictor variables are). The `rpart` function implements the [CART algorithm](https://medium.com/geekculture/decision-trees-with-cart-algorithm-7e179acee8ff). The `rpart` function needs to know the model formula and training data you would like to use. Because we are performing a classification, the method is set to "class" `method = "class"`. We also set `na.action = na.omit` to remove any pixels with `NA`s from the analysis.\
 
-To understand how our decision tree will classify pixels, we can plot the results. The decision tree is comprised of a hierarchy of binary decisions. Each decision rule has 2 outcomes based on a conditional statement pertaining to values in each spectral band.
+To understand how the decision tree will classify pixels, the results can be plotted. The decision tree is comprised of a hierarchy of binary decisions. Each decision rule has 2 outcomes based on a conditional statement pertaining to values in each spectral band.
 
 ```{r include=TRUE}
 # establish model formula
@@ -176,33 +161,47 @@ sb_formula <- type ~ red + green + blue + NIR + SWIR1 + SWIR2
 # train decision tree
 sb_decision_tree <- rpart(formula = sb_formula,
       data = sb_training_data,
-      method = "class",
-      na.action = na.omit)
+      method = "class", #follow method mentioned above
+      na.action = na.omit) #followed method mentioned above
 
 # plot decision tree
 prp(sb_decision_tree)
 ```
 
-#### Apply decision tree
-
-Now that we have created our decision tree, we can apply it to our entire image. The `terra` package includes a `predict()` function that allows us to apply a model to our data. In order for this to work properly, the names of the layers need to match the column names of the predictors we used to train our decision tree. The `predict()` function will return a raster layer with integer values. These integer values correspond to the *factor levels* in the training data. To figure out what category each integer corresponds to, we can inspect the levels of our training data.
+Once the decision tree is created, it can be applied to our entire image. The `terra` package includes a `predict()` function that allows you to apply a model to our data. In order for this to work properly, the names of the layers need to match the column names of the predictors we used to train our decision tree. The `predict()` function will return a raster layer with integer values. The integer values should correspond to the factor levels in the training data. To figure out what category each integer corresponds to, inspect the levels of our training data.
 
 ```{r include=TRUE}
 # classify image based on decision tree
-sb_classification <- predict(landsat, sb_decision_tree, type = "class", na.rm = TRUE)
-# inspect level to understand the order of classes in prediction
+SB_classification <- predict(landsat, sb_decision_tree, type = "class", na.rm = TRUE)
 
-sb_classification
-levels()
+# inspect level to understand the order of classes in prediction
+levels(sb_training_data$type)
 ```
 
-#### Plot results
-
-Now we can plot the results and check out our land cover map!
+## Plot Results
 
 ```{r}
 # plot results
 
-tm_shape(sb_classification) +
-  tm_raster()
+tm_shape(SB_classification) +
+  tm_raster() +
+  tm_title( "Landcover Classification of Southern Santa Barbara County" )
 ```
+
+# Conclusion
+
+Landcover classification can be useful in visualizing changes in landscapes over time, especially when used in combination with a Decision Tree Classifier. This analysis could function as the first step of a study identifying landcover changes in Santa Barbara County following large-scale development operations, or changes in landcover after natural disasters like the Thomas Fire in 2017.
+
+# References
+
+Berkeley, M. L. \@. (2019, March 9). *Machine learning crash course: Part 5 - decision trees and ensemble models*. Medium. [https://medium.com/\@ml.at.berkeley/machine-learning-crash-course-part-5-decision-trees-and-ensemble-models-dcc5a36af8cd](https://medium.com/@ml.at.berkeley/machine-learning-crash-course-part-5-decision-trees-and-ensemble-models-dcc5a36af8cd)
+
+Deepankar, deepankar. (2021, April 22). *Decision trees with CART algorithm*. Medium. <https://medium.com/geekculture/decision-trees-with-cart-algorithm-7e179acee8ff>
+
+*How do I use a scale factor with landsat level-2 science products?*. How do I use a scale factor with Landsat Level-2 science products? \| U.S. Geological Survey. (n.d.). <https://www.usgs.gov/faqs/how-do-i-use-a-scale-factor-landsat-level-2-science-products#:~:text=Landsat%20Collection%202%20surface%20temperature,the%20scale%20factor%20is%20applied.>
+
+*Landsat 5*. Landsat 5 \| U.S. Geological Survey. (n.d.). <https://www.usgs.gov/landsat-missions/landsat-5>
+
+*Landsat collection 2*. Landsat Collection 2 \| U.S. Geological Survey. (n.d.). <https://www.usgs.gov/landsat-missions/landsat-collection-2>
+
+Wikimedia Foundation. (2023, December 12). *Santa Barbara County, California*. Wikipedia. <https://en.wikipedia.org/wiki/Santa_Barbara_County,_California>
